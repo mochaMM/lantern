@@ -49,10 +49,13 @@ func (v *value) Set(val interface{}) {
 	v.mutex.Lock()
 	defer v.mutex.Unlock()
 	v.val.Store(val)
-	atomic.StoreInt32(&v.firstSet, intTrue)
-	// Notify anyone waiting for value
-	for _, waiter := range v.waiters {
-		waiter <- val
+	if atomic.CompareAndSwapInt32(&v.firstSet, intFalse, intTrue) {
+		// Notify anyone waiting for value
+		for _, waiter := range v.waiters {
+			waiter <- val
+		}
+		// Clear waiters
+		v.waiters = nil
 	}
 }
 

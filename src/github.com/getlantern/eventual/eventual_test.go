@@ -78,12 +78,15 @@ func TestConcurrent(t *testing.T) {
 		wg.Done()
 	}()
 
-	time.Sleep(50 * time.Millisecond)
-	r, ok := v.Get(20 * time.Millisecond)
-	assert.True(t, ok, "Get should have succeed")
-	assert.Equal(t, "hi", r, "Wrong result")
-	assert.EqualValues(t, concurrency, atomic.LoadInt32(&sets), "Wrong number of successful Sets")
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			r, ok := v.Get(200 * time.Millisecond)
+			assert.True(t, ok, "Get should have succeed")
+			assert.Equal(t, "hi", r, "Wrong result")
+		}()
+	}
 
 	time.Sleep(50 * time.Millisecond)
+	assert.EqualValues(t, concurrency, atomic.LoadInt32(&sets), "Wrong number of successful Sets")
 	assert.Equal(t, goroutines, runtime.NumGoroutine(), "should not leave goroutine")
 }
