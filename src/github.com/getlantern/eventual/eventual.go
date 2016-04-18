@@ -63,19 +63,18 @@ func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
 	}
 
 	// If we didn't find an existing value, try again but this time using locking
-	var valCh chan interface{}
 	v.mutex.Lock()
 	if atomic.LoadInt32(&v.firstSet) == intTrue {
 		// Value found, use it
 		r := v.val.Load()
 		v.mutex.Unlock()
 		return r, true
-	} else {
-		// Value not found, register to be notified once value is set
-		valCh = make(chan interface{}, 1)
-		v.waiters = append(v.waiters, valCh)
-		v.mutex.Unlock()
 	}
+
+	// Value not found, register to be notified once value is set
+	valCh := make(chan interface{}, 1)
+	v.waiters = append(v.waiters, valCh)
+	v.mutex.Unlock()
 
 	// Wait up to timeout for value to get set
 	select {
