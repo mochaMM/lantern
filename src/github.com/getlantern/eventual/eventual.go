@@ -67,7 +67,7 @@ func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
 	v.mutex.Lock()
 	if atomic.LoadInt32(&v.firstSet) == intTrue {
 		// Value found, use it
-		r := v.val
+		r := v.val.Load()
 		v.mutex.Unlock()
 		return r, true
 	} else {
