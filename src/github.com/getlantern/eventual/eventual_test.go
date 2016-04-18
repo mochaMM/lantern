@@ -44,6 +44,29 @@ func TestNoSet(t *testing.T) {
 	assert.Equal(t, goroutines, runtime.NumGoroutine(), "should not leave goroutine")
 }
 
+func TestCancelImmediate(t *testing.T) {
+	v := NewValue()
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		v.Cancel()
+	}()
+
+	_, ok := v.Get(200 * time.Millisecond)
+	assert.False(t, ok, "Get after cancel should have failed")
+}
+
+func TestCancelAfterSet(t *testing.T) {
+	v := NewValue()
+	v.Set(5)
+	r, ok := v.Get(10 * time.Millisecond)
+	assert.True(t, ok, "Get should have succeeded")
+	assert.Equal(t, 5, r, "Get got wrong value")
+
+	v.Cancel()
+	_, ok = v.Get(10 * time.Millisecond)
+	assert.False(t, ok, "Get after cancel should have failed")
+}
+
 func BenchmarkGet(b *testing.B) {
 	v := NewValue()
 	go func() {

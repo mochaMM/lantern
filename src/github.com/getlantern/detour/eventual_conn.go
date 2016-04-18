@@ -108,6 +108,7 @@ func (conn *eventualConn) Write(b []byte) (n int, err error) {
 }
 
 func (conn *eventualConn) Close() error {
+	conn.conn.Cancel()
 	c, err := conn.getConn()
 	if err != nil {
 		return err

@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	intFalse = 0
-	intTrue  = 1
+	unset    = 0
+	set      = 1
+	canceled = 2
 )
 
 // Value is an eventual value, meaning that callers wishing to access the value
@@ -19,18 +20,23 @@ type Value interface {
 	Set(val interface{})
 
 	// Get waits for the value to be set and returns it, or returns nil if it
-	// times out or Close() is called. valid will be false in latter case.
+	// times out or Cancel() is called. valid will be false in latter case.
 	Get(timeout time.Duration) (ret interface{}, valid bool)
+
+	// Cancel cancels this value, signaling any waiting calls to Get() that no
+	// value is coming. After canceling, all future calls to Get() will return
+	// false.
+	Cancel()
 }
 
 // Getter is a functional interface for the Value.Get function
 type Getter func(time.Duration) (interface{}, bool)
 
 type value struct {
-	val      atomic.Value
-	firstSet int32
-	waiters  []chan interface{}
-	mutex    sync.Mutex
+	val     atomic.Value
+	status  int32
+	waiters []chan interface{}
+	mutex   sync.Mutex
 }
 
 // NewValue creates a new Value.
@@ -49,7 +55,9 @@ func (v *value) Set(val interface{}) {
 	v.mutex.Lock()
 	defer v.mutex.Unlock()
 	v.val.Store(val)
-	if atomic.CompareAndSwapInt32(&v.firstSet, intFalse, intTrue) {
+	atomic.StoreInt32(&v.status, set)
+
+	if v.waiters != nil {
 		// Notify anyone waiting for value
 		for _, waiter := range v.waiters {
 			waiter <- val
@@ -59,15 +67,40 @@ func (v *value) Set(val interface{}) {
 	}
 }
 
+func (v *value) Cancel() {
+	v.mutex.Lock()
+	defer v.mutex.Unlock()
+	atomic.StoreInt32(&v.status, canceled)
+
+	if v.waiters != nil {
+		// Notify anyone waiting for value
+		for _, waiter := range v.waiters {
+			close(waiter)
+		}
+		// Clear waiters
+		v.waiters = nil
+	}
+}
+
 func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
+	status := atomic.LoadInt32(&v.status)
 	// First check for existing value using atomic operations (for speed)
-	if atomic.LoadInt32(&v.firstSet) == intTrue {
+	if status == canceled {
+		// Value was canceled, return false
+		return nil, false
+	} else if status == set {
+		// Value found, use it
 		return v.val.Load(), true
 	}
 
 	// If we didn't find an existing value, try again but this time using locking
 	v.mutex.Lock()
-	if atomic.LoadInt32(&v.firstSet) == intTrue {
+	status = atomic.LoadInt32(&v.status)
+	if status == canceled {
+		// Value was canceled, return false
+		v.mutex.Unlock()
+		return nil, false
+	} else if status == set {
 		// Value found, use it
 		r := v.val.Load()
 		v.mutex.Unlock()
@@ -81,8 +114,8 @@ func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
 
 	// Wait up to timeout for value to get set
 	select {
-	case v := <-valCh:
-		return v, true
+	case v, ok := <-valCh:
+		return v, ok
 	case <-time.After(timeout):
 		return nil, false
 	}
