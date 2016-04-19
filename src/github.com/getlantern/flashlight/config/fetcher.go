@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	cloudConfigPollInterval = 1 * time.Minute
+	cloudConfigPollInterval = 2 * time.Second
 	etag                    = "X-Lantern-Etag"
 	ifNoneMatch             = "X-Lantern-If-None-Match"
 	userIDHeader            = "X-Lantern-User-Id"
@@ -62,12 +62,13 @@ func (cf *fetcher) pollForConfig(currentCfg yamlconf.Config, stickyConfig bool) 
 		// Config doesn't have a CloudConfig, just ignore
 		return mutate, waitTime, nil
 	}
-	if stickyConfig {
-		log.Debugf("Not downloading remote config with sticky config flag set")
-		return mutate, waitTime, nil
-	}
 
 	if bytes, err := cf.fetchCloudConfig(chainedCloudConfigURL); err == nil {
+		if stickyConfig {
+			log.Debugf("Not using remote config with sticky config flag set")
+			return mutate, waitTime, nil
+		}
+
 		// bytes will be nil if the config is unchanged (not modified)
 		if bytes != nil {
 			//log.Debugf("Downloaded config:\n %v", string(bytes[:400]))

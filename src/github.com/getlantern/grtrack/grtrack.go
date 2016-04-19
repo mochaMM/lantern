@@ -24,7 +24,7 @@ func Start() Check {
 	before := buf.String()
 
 	return func(t *testing.T) {
-		time.Sleep(2500 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 
 		var buf bytes.Buffer
 		_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)

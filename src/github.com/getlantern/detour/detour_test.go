@@ -121,7 +121,7 @@ func TestBlockedAfterwards(t *testing.T) {
 func TestRemoveFromWhitelist(t *testing.T) {
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
-	proxy.Timeout(2000*time.Millisecond, detourMsg)
+	proxy.Timeout(200*time.Millisecond, detourMsg)
 	mockURL, _ := newMockServer(directMsg)
 	u, _ := url.Parse(mockURL)
 	AddToWl(u.Host, false)
