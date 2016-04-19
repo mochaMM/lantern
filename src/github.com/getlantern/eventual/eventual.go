@@ -45,7 +45,7 @@ type value struct {
 
 // NewValue creates a new Value.
 func NewValue() Value {
-	return &value{waiters: make([]chan interface{}, 0, 10)}
+	return &value{waiters: make([]chan interface{}, 0)}
 }
 
 // DefaultGetter builds a Getter that always returns the supplied value.
