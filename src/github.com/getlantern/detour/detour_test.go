@@ -274,7 +274,7 @@ func reduceDialTimeout() func() {
 func proxyTo(proxiedURL string) func(network, addr string) (net.Conn, error) {
 	return func(network, addr string) (net.Conn, error) {
 		u, _ := url.Parse(proxiedURL)
-		log.Debugf("Using proxy at %s to dial addr %s", u.Host, addr)
+		log.Tracef("Using proxy at %s to dial addr %s", u.Host, addr)
 		return net.DialTimeout("tcp", u.Host, 100*time.Millisecond)
 	}
 }
@@ -288,6 +288,7 @@ func newClient(proxyURL string, timeout time.Duration) *http.Client {
 		Timeout: timeout,
 	}
 }
+
 func assertContent(t *testing.T, resp *http.Response, msg string, reason string) {
 	b, err := ioutil.ReadAll(resp.Body)
 	assert.NoError(t, err, reason)
@@ -307,7 +308,7 @@ func newGoRoutineTracker(t *testing.T) *goRoutineTracker {
 }
 
 func (tk *goRoutineTracker) verify() {
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(2500 * time.Millisecond)
 
 	var buf bytes.Buffer
 	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
