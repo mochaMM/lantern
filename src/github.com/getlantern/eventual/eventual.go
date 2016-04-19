@@ -9,9 +9,8 @@ import (
 )
 
 const (
-	unset    = 0
-	set      = 1
-	canceled = 2
+	falsey = 0
+	truthy = 1
 )
 
 // Value is an eventual value, meaning that callers wishing to access the value
@@ -27,8 +26,9 @@ type Value interface {
 	Get(timeout time.Duration) (ret interface{}, valid bool)
 
 	// Cancel cancels this value, signaling any waiting calls to Get() that no
-	// value is coming. After canceling, all future calls to Get() will return
-	// false.
+	// value is coming. If no value was set before Cancel() was called, all future
+	// calls to Get() will return nil, false. Subsequent calls to Set after Cancel
+	// have no effect.
 	Cancel()
 }
 
@@ -36,10 +36,11 @@ type Value interface {
 type Getter func(time.Duration) (interface{}, bool)
 
 type value struct {
-	val     atomic.Value
-	status  int32
-	waiters []chan interface{}
-	mutex   sync.Mutex
+	val      atomic.Value
+	set      int32
+	canceled int32
+	waiters  []chan interface{}
+	mutex    sync.Mutex
 }
 
 // NewValue creates a new Value.
@@ -57,24 +58,28 @@ func DefaultGetter(val interface{}) Getter {
 func (v *value) Set(val interface{}) {
 	v.mutex.Lock()
 	defer v.mutex.Unlock()
-	v.val.Store(val)
-	atomic.StoreInt32(&v.status, set)
 
-	if v.waiters != nil {
-		// Notify anyone waiting for value
-		for _, waiter := range v.waiters {
-			waiter <- val
+	settable := atomic.LoadInt32(&v.canceled) == falsey
+	if settable {
+		atomic.StoreInt32(&v.set, truthy)
+		v.val.Store(val)
+
+		if v.waiters != nil {
+			// Notify anyone waiting for value
+			for _, waiter := range v.waiters {
+				waiter <- val
+			}
+			// Clear waiters
+			v.waiters = nil
 		}
-		// Clear waiters
-		v.waiters = nil
 	}
 }
 
 func (v *value) Cancel() {
 	v.mutex.Lock()
 	defer v.mutex.Unlock()
-	atomic.StoreInt32(&v.status, canceled)
 
+	atomic.StoreInt32(&v.canceled, truthy)
 	if v.waiters != nil {
 		// Notify anyone waiting for value
 		for _, waiter := range v.waiters {
@@ -86,28 +91,32 @@ func (v *value) Cancel() {
 }
 
 func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
-	status := atomic.LoadInt32(&v.status)
+	set := atomic.LoadInt32(&v.set) == truthy
+	canceled := atomic.LoadInt32(&v.canceled) == truthy
+
 	// First check for existing value using atomic operations (for speed)
-	if status == canceled {
-		// Value was canceled, return false
-		return nil, false
-	} else if status == set {
+	if set {
 		// Value found, use it
 		return v.val.Load(), true
+	} else if canceled {
+		// Value was canceled, return false
+		return nil, false
 	}
 
 	// If we didn't find an existing value, try again but this time using locking
 	v.mutex.Lock()
-	status = atomic.LoadInt32(&v.status)
-	if status == canceled {
-		// Value was canceled, return false
-		v.mutex.Unlock()
-		return nil, false
-	} else if status == set {
+	set = atomic.LoadInt32(&v.set) == truthy
+	canceled = atomic.LoadInt32(&v.canceled) == truthy
+
+	if set {
 		// Value found, use it
 		r := v.val.Load()
 		v.mutex.Unlock()
 		return r, true
+	} else if canceled {
+		// Value was canceled, return false
+		v.mutex.Unlock()
+		return nil, false
 	}
 
 	if timeout == 0 {

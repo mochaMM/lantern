@@ -32,6 +32,12 @@ func TestSingle(t *testing.T) {
 	assert.True(t, ok, "Get with really long timeout should have succeeded")
 	assert.Equal(t, "hi", r, "Wrong result")
 
+	// Set a different value
+	v.Set("bye")
+	r, ok = v.Get(0)
+	assert.True(t, ok, "Subsequent get with no timeout should have succeeded")
+	assert.Equal(t, "bye", r, "Value should have changed")
+
 	time.Sleep(50 * time.Millisecond)
 	checkGoroutines(t)
 }
@@ -62,12 +68,17 @@ func TestCancelAfterSet(t *testing.T) {
 	v := NewValue()
 	v.Set(5)
 	r, ok := v.Get(10 * time.Millisecond)
-	assert.True(t, ok, "Get should have succeeded")
-	assert.Equal(t, 5, r, "Get got wrong value")
+	assert.True(t, ok, "Get before cancel should have succeeded")
+	assert.Equal(t, 5, r, "Get got wrong value before cancel")
 
 	v.Cancel()
-	_, ok = v.Get(10 * time.Millisecond)
-	assert.False(t, ok, "Get after cancel should have failed")
+	r, ok = v.Get(0)
+	assert.True(t, ok, "Get after cancel should have succeeded")
+	assert.Equal(t, 5, r, "Get got wrong value after cancel")
+
+	v.Set(10)
+	r, ok = v.Get(0)
+	assert.Equal(t, 5, r, "Set after cancel should have no effect")
 }
 
 func BenchmarkGet(b *testing.B) {

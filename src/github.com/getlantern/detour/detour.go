@@ -213,12 +213,12 @@ func (c *conn) Write(b []byte) (int, error) {
 
 func (c *conn) Close() error {
 	close(c.closed)
+	c.detourAllowed.Cancel()
 	_ = c.direct.Close()
 	_ = c.detour.Close()
 
 	log.Tracef("%s: Should detour? %v - Detourable? %v", c.addr, c.direct.ShouldDetour(), c.detour.Detourable())
 	allowed, valid := c.detourAllowed.Get(0)
-	c.detourAllowed.Cancel()
 	if valid && allowed.(bool) && !c.detour.Detourable() {
 		log.Tracef("Remove %s from blocked sites list", c.addr)
 		RemoveFromWl(c.addr)
