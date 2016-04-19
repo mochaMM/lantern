@@ -22,11 +22,14 @@ func TestSingle(t *testing.T) {
 		v.Set("hi")
 	}()
 
-	r, ok := v.Get(10 * time.Millisecond)
+	r, ok := v.Get(0)
+	assert.False(t, ok, "Get with no timeout should have failed")
+
+	r, ok = v.Get(10 * time.Millisecond)
 	assert.False(t, ok, "Get with short timeout should have timed out")
 
-	r, ok = v.Get(20 * time.Millisecond)
-	assert.True(t, ok, "Get with longer timeout should have succeed")
+	r, ok = v.Get(-1)
+	assert.True(t, ok, "Get with really long timeout should have succeeded")
 	assert.Equal(t, "hi", r, "Wrong result")
 
 	time.Sleep(50 * time.Millisecond)

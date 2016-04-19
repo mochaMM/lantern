@@ -2,6 +2,7 @@
 package eventual
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,8 +20,10 @@ type Value interface {
 	// Set sets this Value to the given val.
 	Set(val interface{})
 
-	// Get waits for the value to be set and returns it, or returns nil if it
-	// times out or Cancel() is called. valid will be false in latter case.
+	// Get waits up to timeout for the value to be set and returns it, or returns
+	// nil if it times out or Cancel() is called. valid will be false in latter
+	// case. If timeout is 0, Get won't wait. If timeout is -1, Get will wait
+	// forever.
 	Get(timeout time.Duration) (ret interface{}, valid bool)
 
 	// Cancel cancels this value, signaling any waiting calls to Get() that no
@@ -105,6 +108,17 @@ func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
 		r := v.val.Load()
 		v.mutex.Unlock()
 		return r, true
+	}
+
+	if timeout == 0 {
+		// Don't wait
+		v.mutex.Unlock()
+		return nil, false
+	}
+
+	if timeout == -1 {
+		// Wait essentially forever
+		timeout = time.Duration(math.MaxInt64)
 	}
 
 	// Value not found, register to be notified once value is set

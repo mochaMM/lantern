@@ -121,7 +121,7 @@ func TestBlockedAfterwards(t *testing.T) {
 func TestRemoveFromWhitelist(t *testing.T) {
 	defer stopMockServers()
 	proxiedURL, proxy := newMockServer(detourMsg)
-	proxy.Timeout(200*time.Millisecond, detourMsg)
+	proxy.Timeout(2000*time.Millisecond, detourMsg)
 	mockURL, _ := newMockServer(directMsg)
 	u, _ := url.Parse(mockURL)
 	AddToWl(u.Host, false)
@@ -131,7 +131,7 @@ func TestRemoveFromWhitelist(t *testing.T) {
 	_, err := client.Get(mockURL)
 	if assert.Error(t, err, "should have error if reading times out through detour") {
 		time.Sleep(250 * time.Millisecond)
-		assert.False(t, whitelisted(u.Host), "should be removed from whitelist if reading times out through detour")
+		assert.False(t, whitelisted(u.Host), u.Host+" should be removed from whitelist if reading times out through detour")
 	}
 
 }
