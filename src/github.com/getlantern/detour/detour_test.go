@@ -7,8 +7,9 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"runtime"
+	"regexp"
 	"runtime/pprof"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,8 @@ import (
 )
 
 var (
+	goroutineNumber = regexp.MustCompile(`goroutine ([0-9]+)`)
+
 	directMsg = "hello direct"
 	detourMsg = "hello detour"
 	iranResp  = `HTTP/1.1 403 Forbidden
@@ -36,16 +39,21 @@ func TestBlockedImmediately(t *testing.T) {
 	mock.Timeout(100*time.Millisecond, directMsg)
 	resp, err := client.Get(mockURL)
 	assert.Error(t, err, "direct access to a timeout url should fail")
+
 	tracker := newGoRoutineTracker(t)
 	log.Trace("Test dialing times out")
+	defer reduceDialTimeout()()
 	client = newClient(proxiedURL, 50*time.Millisecond)
+	tracker.verify()
 	resp, err = client.Get("http://255.0.0.1") // it's reserved for future use so will always time out
 	if assert.NoError(t, err, "should have no error if dialing times out") {
 		assertContent(t, resp, detourMsg, "should detour if dialing times out")
 		time.Sleep(50 * time.Millisecond)
 		assert.True(t, wlTemporarily("255.0.0.1:80"), "should be added to whitelist if dialing times out")
 	}
+	tracker.verify()
 
+	tracker = newGoRoutineTracker(t)
 	log.Trace("Test dialing refused")
 	client = newClient(proxiedURL, 50*time.Millisecond)
 	resp, err = client.Get("http://127.0.0.1:4325") // hopefully this port didn't open, so connection will be refused
@@ -54,7 +62,9 @@ func TestBlockedImmediately(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		assert.True(t, wlTemporarily("127.0.0.1:4325"), "should be added to whitelist if connection is refused")
 	}
+	tracker.verify()
 
+	tracker = newGoRoutineTracker(t)
 	log.Trace("Test reading times out")
 	u, _ := url.Parse(mockURL)
 	resp, err = client.Get(mockURL)
@@ -63,7 +73,6 @@ func TestBlockedImmediately(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		assert.True(t, wlTemporarily(u.Host), "should be added to whitelist if reading times out")
 	}
-	time.Sleep(100 * time.Millisecond)
 	tracker.verify()
 }
 
@@ -82,7 +91,6 @@ func TestNonidempotentMethod(t *testing.T) {
 	if assert.Error(t, err, "Non-idempotent method should not be detoured in same connection") {
 		assert.True(t, wlTemporarily(u.Host), "but should be added to whitelist so will detour next time")
 	}
-	time.Sleep(100 * time.Millisecond)
 	tracker.verify()
 }
 
@@ -112,7 +120,6 @@ func TestBlockedAfterwards(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		assert.True(t, wlTemporarily(u.Host), "should be added to whitelist if reading times out")
 	}
-	time.Sleep(100 * time.Millisecond)
 	tracker.verify()
 }
 
@@ -253,15 +260,22 @@ func TestConcurrency(t *testing.T) {
 		}()
 		wg.Wait()
 	}
-	time.Sleep(100 * time.Millisecond)
 	tracker.verify()
+}
+
+func reduceDialTimeout() func() {
+	originalDialTimeout := DialTimeout
+	DialTimeout = 100 * time.Millisecond
+	return func() {
+		DialTimeout = originalDialTimeout
+	}
 }
 
 func proxyTo(proxiedURL string) func(network, addr string) (net.Conn, error) {
 	return func(network, addr string) (net.Conn, error) {
 		u, _ := url.Parse(proxiedURL)
-		log.Tracef("Using proxy at %s to dial addr %s", u.Host, addr)
-		return net.Dial("tcp", u.Host)
+		log.Debugf("Using proxy at %s to dial addr %s", u.Host, addr)
+		return net.DialTimeout("tcp", u.Host, 100*time.Millisecond)
 	}
 }
 
@@ -282,24 +296,45 @@ func assertContent(t *testing.T, resp *http.Response, msg string, reason string)
 }
 
 type goRoutineTracker struct {
-	t     *testing.T
-	num   int
-	stack string
+	t      *testing.T
+	before string
 }
 
 func newGoRoutineTracker(t *testing.T) *goRoutineTracker {
-	numGoroutine := runtime.NumGoroutine()
 	var buf bytes.Buffer
 	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
-	return &goRoutineTracker{t, numGoroutine, buf.String()}
+	return &goRoutineTracker{t, buf.String()}
 }
 
 func (tk *goRoutineTracker) verify() {
-	numGoroutine := runtime.NumGoroutine()
-	if !assert.True(tk.t, numGoroutine <= tk.num, "should not leak goroutines") {
-		var buf bytes.Buffer
-		_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
-		tk.t.Logf("before: %s", tk.stack)
-		tk.t.Logf("after: %s", buf.String())
+	time.Sleep(500 * time.Millisecond)
+
+	var buf bytes.Buffer
+	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
+	after := buf.String()
+
+	beforeGoroutines := make(map[string]bool)
+	beforeMatches := goroutineNumber.FindAllStringSubmatch(tk.before, -1)
+	for _, match := range beforeMatches {
+		beforeGoroutines[match[1]] = true
+	}
+
+	afterMatches := goroutineNumber.FindAllStringSubmatchIndex(after, -1)
+	for i := 0; i < len(afterMatches); i++ {
+		idx := afterMatches[i][0]
+		nextIdx := len(after)
+		last := i == len(afterMatches)-1
+		if !last {
+			nextIdx = afterMatches[i+1][0]
+		}
+		matches := goroutineNumber.FindAllStringSubmatch(after[idx:], 1)
+		num := matches[0][1]
+		_, exists := beforeGoroutines[num]
+		if !exists {
+			delta := after[idx:nextIdx]
+			if !strings.Contains(delta, "net/http/server.go") {
+				assert.Fail(tk.t, "Leaked Goroutine", delta)
+			}
+		}
 	}
 }
