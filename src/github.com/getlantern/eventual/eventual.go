@@ -8,11 +8,6 @@ import (
 	"time"
 )
 
-const (
-	falsey = 0
-	truthy = 1
-)
-
 // Value is an eventual value, meaning that callers wishing to access the value
 // block until the value is available.
 type Value interface {
@@ -36,11 +31,15 @@ type Value interface {
 type Getter func(time.Duration) (interface{}, bool)
 
 type value struct {
-	val      atomic.Value
-	set      int32
-	canceled int32
-	waiters  []chan interface{}
-	mutex    sync.Mutex
+	state   atomic.Value
+	waiters []chan interface{}
+	mutex   sync.Mutex
+}
+
+type stateholder struct {
+	val      interface{}
+	set      bool
+	canceled bool
 }
 
 // NewValue creates a new Value.
@@ -59,10 +58,14 @@ func (v *value) Set(val interface{}) {
 	v.mutex.Lock()
 	defer v.mutex.Unlock()
 
-	settable := atomic.LoadInt32(&v.canceled) == falsey
+	state := v.getState()
+	settable := state == nil || !state.canceled
 	if settable {
-		atomic.StoreInt32(&v.set, truthy)
-		v.val.Store(val)
+		v.setState(&stateholder{
+			val:      val,
+			set:      true,
+			canceled: false,
+		})
 
 		if v.waiters != nil {
 			// Notify anyone waiting for value
@@ -79,7 +82,16 @@ func (v *value) Cancel() {
 	v.mutex.Lock()
 	defer v.mutex.Unlock()
 
-	atomic.StoreInt32(&v.canceled, truthy)
+	state := v.getState()
+	newState := &stateholder{
+		canceled: true,
+	}
+	if state != nil {
+		newState.val = state.val
+		newState.set = state.set
+	}
+	v.setState(newState)
+
 	if v.waiters != nil {
 		// Notify anyone waiting for value
 		for _, waiter := range v.waiters {
@@ -91,36 +103,36 @@ func (v *value) Cancel() {
 }
 
 func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
-	set := atomic.LoadInt32(&v.set) == truthy
-	canceled := atomic.LoadInt32(&v.canceled) == truthy
+	state := v.getState()
+	set := state != nil && state.set
+	canceled := state != nil && state.canceled
 
 	// First check for existing value using atomic operations (for speed)
 	if set {
 		// Value found, use it
-		return v.val.Load(), true
+		return state.val, true
 	} else if canceled {
 		// Value was canceled, return false
-		return nil, false
-	}
-
-	// If we didn't find an existing value, try again but this time using locking
-	v.mutex.Lock()
-	set = atomic.LoadInt32(&v.set) == truthy
-	canceled = atomic.LoadInt32(&v.canceled) == truthy
-
-	if set {
-		// Value found, use it
-		r := v.val.Load()
-		v.mutex.Unlock()
-		return r, true
-	} else if canceled {
-		// Value was canceled, return false
-		v.mutex.Unlock()
 		return nil, false
 	}
 
 	if timeout == 0 {
 		// Don't wait
+		return nil, false
+	}
+
+	// If we didn't find an existing value, try again but this time using locking
+	v.mutex.Lock()
+	state = v.getState()
+	set = state != nil && state.set
+	canceled = state != nil && state.canceled
+
+	if set {
+		// Value found, use it
+		v.mutex.Unlock()
+		return state.val, true
+	} else if canceled {
+		// Value was canceled, return false
 		v.mutex.Unlock()
 		return nil, false
 	}
@@ -142,4 +154,16 @@ func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
 	case <-time.After(timeout):
 		return nil, false
 	}
+}
+
+func (v *value) getState() *stateholder {
+	state := v.state.Load()
+	if state == nil {
+		return nil
+	}
+	return state.(*stateholder)
+}
+
+func (v *value) setState(state *stateholder) {
+	v.state.Store(state)
 }
