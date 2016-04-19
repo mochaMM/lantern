@@ -1,12 +1,12 @@
 package eventual
 
 import (
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/getlantern/grtrack"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,7 +15,7 @@ const (
 )
 
 func TestSingle(t *testing.T) {
-	goroutines := runtime.NumGoroutine()
+	checkGoroutines := grtrack.Start()
 	v := NewValue()
 	go func() {
 		time.Sleep(20 * time.Millisecond)
@@ -30,18 +30,18 @@ func TestSingle(t *testing.T) {
 	assert.Equal(t, "hi", r, "Wrong result")
 
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, goroutines, runtime.NumGoroutine(), "should not leave goroutine")
+	checkGoroutines(t)
 }
 
 func TestNoSet(t *testing.T) {
-	goroutines := runtime.NumGoroutine()
+	checkGoroutines := grtrack.Start()
 	v := NewValue()
 
 	_, ok := v.Get(10 * time.Millisecond)
 	assert.False(t, ok, "Get before setting value should not be okay")
 
 	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, goroutines, runtime.NumGoroutine(), "should not leave goroutine")
+	checkGoroutines(t)
 }
 
 func TestCancelImmediate(t *testing.T) {
@@ -80,7 +80,7 @@ func BenchmarkGet(b *testing.B) {
 }
 
 func TestConcurrent(t *testing.T) {
-	goroutines := runtime.NumGoroutine()
+	checkGoroutines := grtrack.Start()
 	v := NewValue()
 
 	var sets int32
@@ -111,5 +111,5 @@ func TestConcurrent(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 	assert.EqualValues(t, concurrency, atomic.LoadInt32(&sets), "Wrong number of successful Sets")
-	assert.Equal(t, goroutines, runtime.NumGoroutine(), "should not leave goroutine")
+	checkGoroutines(t)
 }
