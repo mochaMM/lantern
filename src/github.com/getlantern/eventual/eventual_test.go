@@ -15,7 +15,7 @@ const (
 )
 
 func TestSingle(t *testing.T) {
-	checkGoroutines := grtrack.Start()
+	goroutines := grtrack.Start()
 	v := NewValue()
 	go func() {
 		time.Sleep(20 * time.Millisecond)
@@ -38,19 +38,17 @@ func TestSingle(t *testing.T) {
 	assert.True(t, ok, "Subsequent get with no timeout should have succeeded")
 	assert.Equal(t, "bye", r, "Value should have changed")
 
-	time.Sleep(50 * time.Millisecond)
-	checkGoroutines(t)
+	goroutines.CheckAfter(t, 50*time.Millisecond)
 }
 
 func TestNoSet(t *testing.T) {
-	checkGoroutines := grtrack.Start()
+	goroutines := grtrack.Start()
 	v := NewValue()
 
 	_, ok := v.Get(10 * time.Millisecond)
 	assert.False(t, ok, "Get before setting value should not be okay")
 
-	time.Sleep(50 * time.Millisecond)
-	checkGoroutines(t)
+	goroutines.CheckAfter(t, 50*time.Millisecond)
 }
 
 func TestCancelImmediate(t *testing.T) {
@@ -94,7 +92,7 @@ func BenchmarkGet(b *testing.B) {
 }
 
 func TestConcurrent(t *testing.T) {
-	checkGoroutines := grtrack.Start()
+	goroutines := grtrack.Start()
 	v := NewValue()
 
 	var sets int32
@@ -123,7 +121,6 @@ func TestConcurrent(t *testing.T) {
 		}()
 	}
 
-	time.Sleep(50 * time.Millisecond)
+	goroutines.CheckAfter(t, 50*time.Millisecond)
 	assert.EqualValues(t, concurrency, atomic.LoadInt32(&sets), "Wrong number of successful Sets")
-	checkGoroutines(t)
 }

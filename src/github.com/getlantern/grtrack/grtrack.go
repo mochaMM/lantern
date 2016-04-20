@@ -16,16 +16,26 @@ var (
 	goroutineNumber = regexp.MustCompile(`goroutine ([0-9]+)`)
 )
 
-type Check func(t *testing.T)
+// Object that can be used to check whether goroutines have leaked at any point
+// in time.
+type Checker interface {
+	// Check immediately checks whether there's been a leak
+	Check(t *testing.T)
 
-func Start() Check {
+	// CheckAfter waits wait and then checks
+	CheckAfter(t *testing.T, wait time.Duration)
+}
+
+type checker struct {
+	check func(t *testing.T)
+}
+
+func Start() Checker {
 	var buf bytes.Buffer
 	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
 	before := buf.String()
 
-	return func(t *testing.T) {
-		time.Sleep(250 * time.Millisecond)
-
+	check := func(t *testing.T) {
 		var buf bytes.Buffer
 		_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
 		after := buf.String()
@@ -55,4 +65,15 @@ func Start() Check {
 			}
 		}
 	}
+
+	return &checker{check}
+}
+
+func (c *checker) Check(t *testing.T) {
+	c.check(t)
+}
+
+func (c *checker) CheckAfter(t *testing.T, wait time.Duration) {
+	time.Sleep(wait)
+	c.check(t)
 }

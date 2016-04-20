@@ -44,7 +44,9 @@ type stateholder struct {
 
 // NewValue creates a new Value.
 func NewValue() Value {
-	return &value{waiters: make([]chan interface{}, 0)}
+	result := &value{waiters: make([]chan interface{}, 0)}
+	result.state.Store(&stateholder{})
+	return result
 }
 
 // DefaultGetter builds a Getter that always returns the supplied value.
@@ -59,7 +61,7 @@ func (v *value) Set(val interface{}) {
 	defer v.mutex.Unlock()
 
 	state := v.getState()
-	settable := state == nil || !state.canceled
+	settable := !state.canceled
 	if settable {
 		v.setState(&stateholder{
 			val:      val,
@@ -83,14 +85,11 @@ func (v *value) Cancel() {
 	defer v.mutex.Unlock()
 
 	state := v.getState()
-	newState := &stateholder{
+	v.setState(&stateholder{
+		val:      state.val,
+		set:      state.set,
 		canceled: true,
-	}
-	if state != nil {
-		newState.val = state.val
-		newState.set = state.set
-	}
-	v.setState(newState)
+	})
 
 	if v.waiters != nil {
 		// Notify anyone waiting for value
