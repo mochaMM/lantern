@@ -103,14 +103,12 @@ func (v *value) Cancel() {
 
 func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
 	state := v.getState()
-	set := state != nil && state.set
-	canceled := state != nil && state.canceled
 
 	// First check for existing value using atomic operations (for speed)
-	if set {
+	if state.set {
 		// Value found, use it
 		return state.val, true
-	} else if canceled {
+	} else if state.canceled {
 		// Value was canceled, return false
 		return nil, false
 	}
@@ -123,14 +121,12 @@ func (v *value) Get(timeout time.Duration) (ret interface{}, valid bool) {
 	// If we didn't find an existing value, try again but this time using locking
 	v.mutex.Lock()
 	state = v.getState()
-	set = state != nil && state.set
-	canceled = state != nil && state.canceled
 
-	if set {
+	if state.set {
 		// Value found, use it
 		v.mutex.Unlock()
 		return state.val, true
-	} else if canceled {
+	} else if state.canceled {
 		// Value was canceled, return false
 		v.mutex.Unlock()
 		return nil, false
