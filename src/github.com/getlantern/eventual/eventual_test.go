@@ -1,12 +1,12 @@
 package eventual
 
 import (
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/getlantern/grtrack"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -15,63 +15,68 @@ const (
 )
 
 func TestSingle(t *testing.T) {
-	goroutines := runtime.NumGoroutine()
+	goroutines := grtrack.Start()
 	v := NewValue()
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		v.Set("hi")
 	}()
 
-	r, ok := v.Get(10 * time.Millisecond)
+	r, ok := v.Get(0)
+	assert.False(t, ok, "Get with no timeout should have failed")
+
+	r, ok = v.Get(10 * time.Millisecond)
 	assert.False(t, ok, "Get with short timeout should have timed out")
 
-	r, ok = v.Get(20 * time.Millisecond)
-	assert.True(t, ok, "Get with longer timeout should have succeed")
+	r, ok = v.Get(-1)
+	assert.True(t, ok, "Get with really long timeout should have succeeded")
 	assert.Equal(t, "hi", r, "Wrong result")
 
-	v.Stop()
-	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, goroutines, runtime.NumGoroutine(), "should not leave goroutine")
+	// Set a different value
+	v.Set("bye")
+	r, ok = v.Get(0)
+	assert.True(t, ok, "Subsequent get with no timeout should have succeeded")
+	assert.Equal(t, "bye", r, "Value should have changed")
+
+	goroutines.CheckAfter(t, 50*time.Millisecond)
 }
 
-/*func TestHappenAfter(t *testing.T) {
+func TestNoSet(t *testing.T) {
+	goroutines := grtrack.Start()
 	v := NewValue()
-	defer v.Stop()
-	var wg sync.WaitGroup
-	wg.Add(2)
+
+	_, ok := v.Get(10 * time.Millisecond)
+	assert.False(t, ok, "Get before setting value should not be okay")
+
+	goroutines.CheckAfter(t, 50*time.Millisecond)
+}
+
+func TestCancelImmediate(t *testing.T) {
+	v := NewValue()
 	go func() {
-		v.Set("hi")
-		wg.Done()
+		time.Sleep(10 * time.Millisecond)
+		v.Cancel()
 	}()
 
-	go func() {
-		v, valid := v.Get(0)
-		if assert.True(t, valid, "Get should happen after Set") {
-			assert.Equal(t, "hi", v.(string), "Get should get correct value")
-		}
-		wg.Done()
-	}()
-	wg.Wait()
-}*/
+	_, ok := v.Get(200 * time.Millisecond)
+	assert.False(t, ok, "Get after cancel should have failed")
+}
 
-func TestNoRace(t *testing.T) {
-	goroutines := runtime.NumGoroutine()
+func TestCancelAfterSet(t *testing.T) {
 	v := NewValue()
-	var wg sync.WaitGroup
-	wg.Add(20)
-	for i := 0; i < 10; i++ {
-		go func() {
-			v.Set("hi")
-			wg.Done()
-		}()
-		go func() {
-			v.Stop()
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, goroutines, runtime.NumGoroutine(), "should not leave goroutine")
+	v.Set(5)
+	r, ok := v.Get(10 * time.Millisecond)
+	assert.True(t, ok, "Get before cancel should have succeeded")
+	assert.Equal(t, 5, r, "Get got wrong value before cancel")
+
+	v.Cancel()
+	r, ok = v.Get(0)
+	assert.True(t, ok, "Get after cancel should have succeeded")
+	assert.Equal(t, 5, r, "Get got wrong value after cancel")
+
+	v.Set(10)
+	r, ok = v.Get(0)
+	assert.Equal(t, 5, r, "Set after cancel should have no effect")
 }
 
 func BenchmarkGet(b *testing.B) {
@@ -87,7 +92,7 @@ func BenchmarkGet(b *testing.B) {
 }
 
 func TestConcurrent(t *testing.T) {
-	goroutines := runtime.NumGoroutine()
+	goroutines := grtrack.Start()
 	v := NewValue()
 
 	var sets int32
@@ -108,13 +113,14 @@ func TestConcurrent(t *testing.T) {
 		wg.Done()
 	}()
 
-	time.Sleep(50 * time.Millisecond)
-	r, ok := v.Get(20 * time.Millisecond)
-	assert.True(t, ok, "Get should have succeed")
-	assert.Equal(t, "hi", r, "Wrong result")
-	assert.EqualValues(t, concurrency, atomic.LoadInt32(&sets), "Wrong number of successful Sets")
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			r, ok := v.Get(200 * time.Millisecond)
+			assert.True(t, ok, "Get should have succeed")
+			assert.Equal(t, "hi", r, "Wrong result")
+		}()
+	}
 
-	v.Stop()
-	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, goroutines, runtime.NumGoroutine(), "should not leave goroutine")
+	goroutines.CheckAfter(t, 50*time.Millisecond)
+	assert.EqualValues(t, concurrency, atomic.LoadInt32(&sets), "Wrong number of successful Sets")
 }
